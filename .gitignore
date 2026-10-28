@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Heavy binaries, models and dynamic libraries
+bin/
+*.gguf
+*.bin
+*.dll
+*.so
+*.dylib
+
+# Local outputs & test directories
+output/
+test_*/
+*.pdf
+
+# Local configurations & user state
+config.json
+.cache/
+
+# OS artifacts
+Thumbs.db
+.DS_Store
+*.tmp
