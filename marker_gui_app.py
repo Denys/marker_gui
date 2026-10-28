@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -178,6 +179,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "dialog_add_files": "Select one or more PDF files to add to queue",
         "dialog_add_folder": "Select folder containing PDF files",
         "dialog_out_folder": "Select destination folder",
+        "btn_gemini_key": "🔑 API Key...",
+        "btn_gemini_key_tooltip": "Configure Google Gemini API Key for fast cloud formula recognition",
+        "dialog_gemini_title": "Google Gemini API Key",
+        "dialog_gemini_prompt": "Enter your Google Gemini API Key:\n(Free key from https://aistudio.google.com/app/apikey)",
+        "log_gemini_key_saved": "[+] Gemini API Key saved to local configuration.",
+        "warn_gemini_key_missing": "[!] Missing Gemini API Key. Please provide an API key to use Cloud AI mode.",
     },
     "it": {
         "app_title": "MARKER STUDIO",
@@ -279,6 +286,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "dialog_add_files": "Seleziona uno o più file PDF da aggiungere alla coda",
         "dialog_add_folder": "Seleziona cartella contenente i PDF",
         "dialog_out_folder": "Seleziona cartella di destinazione",
+        "btn_gemini_key": "🔑 Chiave API...",
+        "btn_gemini_key_tooltip": "Configura la chiave Google Gemini API per il riconoscimento veloce nel cloud",
+        "dialog_gemini_title": "Chiave API Google Gemini",
+        "dialog_gemini_prompt": "Inserisci la tua Google Gemini API Key:\n(Chiave gratuita su https://aistudio.google.com/app/apikey)",
+        "log_gemini_key_saved": "[+] Chiave API Gemini salvata nella configurazione locale.",
+        "warn_gemini_key_missing": "[!] Chiave Gemini API mancante. Configura la chiave per usare la modalità Cloud AI.",
     },
 }
 
@@ -286,6 +299,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
 def load_config() -> dict:
     default_cfg = {
         "language": "en",
+        "gemini_api_key": "",
         "last_input_dir": str(Path.home()),
         "last_output_dir": str(DEFAULT_OUTPUT_DIR),
         "engine_mode": "local_gpu",
@@ -333,6 +347,7 @@ class ConversionWorker(QThread):
         output_dir: str,
         engine_mode: str,
         page_range: str,
+        gemini_api_key: str = "",
         lang: str = "en",
         parent: Optional[QObject] = None,
     ):
@@ -341,6 +356,7 @@ class ConversionWorker(QThread):
         self.output_dir = output_dir
         self.engine_mode = engine_mode
         self.page_range = page_range.strip()
+        self.gemini_api_key = gemini_api_key.strip()
         self.lang = lang
         self._is_cancelled = False
         self.process: Optional[subprocess.Popen] = None
@@ -402,12 +418,14 @@ class ConversionWorker(QThread):
             msg = "[*] Formula Engine: Local GPU RTX 3070 (Fast Mode + LaTeX Math OCR)" if self.lang == "en" else "[*] Motore Formule: Locale GPU RTX 3070 (Modalità Veloce + OCR Formule LaTeX)"
             self.output_line.emit(msg)
         elif self.engine_mode == "gemini_cloud":
-            gemini_key = env.get("GEMINI_API_KEY", "").strip()
-            if not gemini_key:
+            gemini_key = self.gemini_api_key or env.get("GEMINI_API_KEY", "").strip()
+            if gemini_key:
+                env["GEMINI_API_KEY"] = gemini_key
+            else:
                 warn_msg = (
-                    "[!] WARNING: GEMINI_API_KEY environment variable not set. Please set GEMINI_API_KEY to use Gemini Cloud mode."
+                    "[!] WARNING: GEMINI_API_KEY not provided. Please configure your Gemini API Key."
                     if self.lang == "en"
-                    else "[!] ATTENZIONE: Variabile d'ambiente GEMINI_API_KEY non impostata. Imposta GEMINI_API_KEY per usare Gemini Cloud."
+                    else "[!] ATTENZIONE: GEMINI_API_KEY non fornita. Configura la chiave Gemini API."
                 )
                 self.output_line.emit(warn_msg)
             cmd.extend([
@@ -744,9 +762,15 @@ class MarkerStudioWindow(QMainWindow):
         self.cmb_engine.addItem("", "local_gpu")
         self.cmb_engine.addItem("", "gemini_cloud")
         self.cmb_engine.addItem("", "fast_text")
+        self.cmb_engine.currentIndexChanged.connect(self._on_engine_changed)
+
+        self.btn_gemini_key = QPushButton("")
+        self.btn_gemini_key.setFixedHeight(28)
+        self.btn_gemini_key.clicked.connect(self.configure_gemini_key)
 
         engine_row.addWidget(self.lbl_engine)
         engine_row.addWidget(self.cmb_engine, 1)
+        engine_row.addWidget(self.btn_gemini_key)
         paths_layout.addLayout(engine_row)
 
         # Row 3: Page Range & Preferences
@@ -965,6 +989,8 @@ class MarkerStudioWindow(QMainWindow):
         self.cmb_engine.setToolTip(self.t("engine_tooltip"))
         if cur_eng_idx >= 0:
             self.cmb_engine.setCurrentIndex(cur_eng_idx)
+        self.btn_gemini_key.setText(self.t("btn_gemini_key"))
+        self.btn_gemini_key.setToolTip(self.t("btn_gemini_key_tooltip"))
 
         self.lbl_pages.setText(self.t("lbl_pages"))
         self.txt_pages.setPlaceholderText(self.t("placeholder_pages"))
@@ -1463,6 +1489,40 @@ class MarkerStudioWindow(QMainWindow):
         if target_path and Path(target_path).exists():
             os.startfile(target_path)
 
+    def _on_engine_changed(self) -> None:
+        if self.cmb_engine.currentData() == "gemini_cloud":
+            if not self.get_gemini_key():
+                self.configure_gemini_key()
+
+    def get_gemini_key(self) -> str:
+        return (os.environ.get("GEMINI_API_KEY", "").strip() or self.config.get("gemini_api_key", "").strip())
+
+    def configure_gemini_key(self) -> None:
+        current_key = self.get_gemini_key()
+        masked_hint = (current_key[:6] + "..." + current_key[-4:]) if len(current_key) > 10 else ("Configured" if current_key else "")
+        prompt = self.t("dialog_gemini_prompt")
+        if masked_hint:
+            prompt += f"\n\n[Current: {masked_hint}]"
+
+        key, ok = QInputDialog.getText(
+            self,
+            self.t("dialog_gemini_title"),
+            prompt,
+            QLineEdit.EchoMode.Normal,
+            current_key,
+        )
+        if ok:
+            clean_key = key.strip()
+            self.config["gemini_api_key"] = clean_key
+            save_config(self.config)
+            if clean_key:
+                os.environ["GEMINI_API_KEY"] = clean_key
+                self.log(self.t("log_gemini_key_saved"))
+            else:
+                if "GEMINI_API_KEY" in os.environ:
+                    del os.environ["GEMINI_API_KEY"]
+                self.log("[i] Gemini API Key cleared.")
+
     # --- Queue Execution Engine ---
 
     def start_queue(self) -> None:
@@ -1472,6 +1532,13 @@ class MarkerStudioWindow(QMainWindow):
         if not self.queue:
             self.log(self.t("log_empty_queue"))
             return
+
+        selected_engine = self.cmb_engine.currentData() or "local_gpu"
+        if selected_engine == "gemini_cloud" and not self.get_gemini_key():
+            self.configure_gemini_key()
+            if not self.get_gemini_key():
+                self.log(self.t("warn_gemini_key_missing"))
+                return
 
         out_dir = self.txt_output.text().strip().strip('"')
         if not out_dir:
@@ -1606,6 +1673,7 @@ class MarkerStudioWindow(QMainWindow):
             output_dir=out_dir,
             engine_mode=selected_engine,
             page_range=self.txt_pages.text(),
+            gemini_api_key=self.get_gemini_key(),
             lang=self.lang,
         )
         self.current_worker.output_line.connect(self.log)
