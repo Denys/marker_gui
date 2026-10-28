@@ -766,6 +766,11 @@ class MarkerStudioWindow(QMainWindow):
 
         self.btn_gemini_key = QPushButton("")
         self.btn_gemini_key.setFixedHeight(28)
+        self.btn_gemini_key.setFixedWidth(120)
+        self.btn_gemini_key.setStyleSheet(
+            "QPushButton { background-color: #1f2937; color: #58a6ff; border: 1px solid #388bfd; border-radius: 5px; font-weight: 700; font-size: 11.5px; padding: 2px 8px; }"
+            "QPushButton:hover { background-color: #1f6feb; color: #ffffff; border-color: #58a6ff; }"
+        )
         self.btn_gemini_key.clicked.connect(self.configure_gemini_key)
 
         engine_row.addWidget(self.lbl_engine)
